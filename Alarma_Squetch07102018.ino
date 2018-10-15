@@ -31,44 +31,58 @@ const int DTMF_freq2[] = {  941,  697,  697,  697,  770,  770,  770,  852,  852,
 
 enum Actions{NewToken, SwitchClosed};
 //uint8_t
+
+//sensors definition and map to number
 const int PIN_COUNT = 1;
 int pins_conected[]={2};  
 String phone_number_pin_connected_map[]={"8675309"};
 
-int closed_pins_index[PIN_COUNT]={-1};
-int closed_pins_real_count=0;
 
-int current_playing_closed_pins_index=0;
 
 int descolgarPin = 10;
 int tone1Pin=11;
 int tone2Pin=12;
 
-int call_time=10000;//change to 10000 on production
-int call_interval=10000;//change to 30000 on production
 
-long last_dialnumber_call=0;
-
-bool activada = false;//Cambiar para false al ir a produccion
-String activation_code="1111";
-bool avisando = false;
-
-String dtmf_tokens_buffer="";
-long first_dtmf_start=0;
-char dtmf_delimiter = '#';
-int token_max_length=5000;
-bool tokenStarted=false;
-
+//dtmf detection params
 int sensorPin = A0;
 float n=128.0;
 // sampling rate in Hz
 float sampling_rate=8926.0;
-
 // Instantiate the dtmf library with the number of samples to be taken
 // and the sampling rate.
 DTMF dtmf = DTMF(n,sampling_rate);
 int nochar_count = 0;
 float d_mags[8];
+
+
+
+//Aplication state variables
+int last_switch_closed_time = 0;
+int exit_interval=0;
+
+int call_time=10000;//change to 10000 on production
+int call_interval=10000;//change to 30000 on production
+
+bool activada = false;//Cambiar para false al ir a produccion
+String activation_code="1111";
+bool avisando = false;
+
+//transient state registerClosedSwitch
+int closed_pins_index[PIN_COUNT]={-1};
+int closed_pins_real_count=0;
+
+//transient state dialnumber()
+long last_dialnumber_call_time=0;
+int current_playing_closed_pins_index=0;
+
+
+//transient state dtmf token parser
+String dtmf_tokens_buffer="";
+long first_dtmf_start=0;
+char dtmf_delimiter = '#';
+int token_max_length=5000;
+bool tokenStarted=false;
 
 void setup() {
   //start serial connection
@@ -162,10 +176,9 @@ void playDTMF(int number, long duration)
 }
 
 void dialNumber(String phone_number){    
-  if(millis() - last_dialnumber_call > (call_time + call_interval )){
-    Serial.println("");
-    Serial.println(phone_number);
-    last_dialnumber_call =millis();
+  if(millis() - last_dialnumber_call_time > (call_time + call_interval )){
+    Serial.println("");    
+    last_dialnumber_call_time =millis();
     digitalWrite(descolgarPin,HIGH);  
     for(int i = 0; i < phone_number.length(); i ++)
     {
