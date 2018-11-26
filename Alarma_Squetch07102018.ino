@@ -20,7 +20,7 @@
   http://www.arduino.cc/en/Tutorial/InputPullupSerial
 */
 #include <Tone.h>
-
+#include <EEPROM.h>
 #include <DTMF.h>
 
 Tone freq1;
@@ -37,12 +37,16 @@ const int PIN_COUNT = 1;
 int pins_conected[]={2};  
 String phone_number_pin_connected_map[]={"8675309"};
 
+const byte EEPROM_ID = 0x99; // used to identify if valid data in EEPROM
+//constants used to identify EEPROM addresses
+const int ID_ADDR = 0; // the EEPROM address used to store the ID
+const int is_calling_ADDR = 1; // the EEPROM address used to store the pin
+const int is_active_ADDR = 2; // the EEPROM address used to store the interval
 
-
+int sirenaPin = 9;
 int descolgarPin = 10;
 int tone1Pin=11;
 int tone2Pin=12;
-
 
 //dtmf detection params
 int sensorPin = A0;
@@ -55,18 +59,20 @@ DTMF dtmf = DTMF(n,sampling_rate);
 int nochar_count = 0;
 float d_mags[8];
 
-
-
 //Aplication state variables
-int last_switch_closed_time = 0;
 int exit_interval=0;
 
 int call_time=10000;//change to 10000 on production
 int call_interval=10000;//change to 30000 on production
 
 bool activada = false;//Cambiar para false al ir a produccion
+long activation_time=0;
 String activation_code="1111";
 bool avisando = false;
+
+//transient state is sensorsReadyToActivateAlarm()
+long last_switch_closed_time = 0;
+int switches_ready_interval = 10000;
 
 //transient state registerClosedSwitch
 int closed_pins_index[PIN_COUNT]={-1};
@@ -75,7 +81,6 @@ int closed_pins_real_count=0;
 //transient state dialnumber()
 long last_dialnumber_call_time=0;
 int current_playing_closed_pins_index=0;
-
 
 //transient state dtmf token parser
 String dtmf_tokens_buffer="";
@@ -95,21 +100,29 @@ void setup() {
   freq2.begin(tone2Pin);
     
   pinMode(13, OUTPUT);
+  
+  byte id = EEPROM.read(ID_ADDR);// read the first byte from the EEPROM
+  if( id == EEPROM_ID){
+    readAppState();
+  }  
 }
 
 void loop() {
   //read the pushbutton value into a variable
   //int sensorVal = digitalRead(2);
   //print out the value of the pushbutton
-  //Serial.println(sensorVal); 
-  if(activada){
-    checkPinsSwitchesAndRegister(); 
+  //Serial.println(sensorVal);   
+  if(activada){    
     digitalWrite(13, HIGH);
   }else{
     digitalWrite(13, LOW);
   }
-  if(avisando)
+  //Siempre se velan los lazos para notificar en caso d q este algun sensor en estado incorrecto.
+  checkPinsSwitchesAndRegister(); 
+  
+  if(avisando){
     dialNumber(phone_number_pin_connected_map[0]);// Solo para probar en el caso de llamar al numero d aviso (DESCOLGADO DE LINEA FIJA) /cambiar para version celular.
+  }
 
   String token= tokenParser();
   if(!token.equals(""))
@@ -119,21 +132,47 @@ void loop() {
 void matchAction(int action,String param){
   if(action == NewToken){    
     if(param.equals(activation_code)) {
-      activada = !activada;    
-      if(!activada)
-        avisando= false;    
+      if(activada){
+        avisando= false;
+  
+        activada= false;
+        saveAppState();
+      }else{
+        if(sensorsReadyToActivateAlarm()){
+          activada=true;
+          saveAppState();
+          activation_time=millis();
+        }else
+        Serial.println("Sistem it is not ready");        
+      }         
     }       
   }    
   if(action == SwitchClosed) {
      Blink(200);// Eliminar en produccion
      int index = param.toInt();
-     if(activada)   {   
+     last_switch_closed_time = millis();
+     if(activada && (millis - activation_time > exit_interval))   {   
         registerClosedPinIndex(index);
         avisando=true;
-     } 
+        saveAppState();
+     }
   } 
 }
 
+bool sensorsReadyToActivateAlarm(){ 
+  return millis() - last_switch_closed_time > switches_ready_interval;
+}
+
+void saveAppState(){
+  EEPROM.write(ID_ADDR,EEPROM_ID);
+  EEPROM.write(is_calling_ADDR,avisando);
+  EEPROM.write(is_active_ADDR,activada);
+}
+
+void readAppState(){
+  avisando = EEPROM.read(is_calling_ADDR);
+  activada = EEPROM.read(is_active_ADDR);
+}
 
 void checkPinsSwitchesAndRegister(){  
   char buff[12];
@@ -151,6 +190,9 @@ void Blink(int interval){
   digitalWrite(13, HIGH);   
   delay(interval);
   digitalWrite(13, LOW);
+}
+void playBuzzerTone(){
+  
 }
 
 bool isSwitchClosedOnPin(int pin,bool isPullUP){
